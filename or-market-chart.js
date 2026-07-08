@@ -1,104 +1,214 @@
 /* ============================================================
-   OUTLAW REALTY — MARKET REPORT CHART WIDGET (v2)
-   Self-contained: injects its own CSS + markup, loads Chart.js,
-   fetches CSV data, renders the card.
+   OUTLAW REALTY — MARKET REPORT WIDGET  (v3)
+   ------------------------------------------------------------
+   Renders a full market report card per city from the live
+   Google Sheets pipeline (metrics + by_type tabs):
 
-   MODE A (preferred — firewall-proof, zero HTML in WordPress):
-     1. In Elementor, add an EMPTY Container/Section and set
-        Advanced → CSS ID to a value from MOUNTS below
-        (e.g. "or-market-bozeman").
-     2. Load this script via Google Tag Manager (Custom HTML tag)
-        or any script tag. The card builds itself into that ID.
-     All config (CSV URL, headings, copy) lives in MOUNTS below —
-     nothing is ever saved through WordPress.
+     • Market temperature gauge (months of supply) with an
+       auto-generated interpretation sentence
+     • Headline stat cards: Homes Sold, Median DOM,
+       Months of Supply, Median List Price — each with a
+       generated one-line read
+     • Trend charts: monthly home sales + median days on market
+     • Property type table (last full month, with YoY sales)
 
-   MODE B (if HTML widgets are allowed): place
-     <div class="or-market-chart" data-csv="..." data-eyebrow="..."
-          data-heading="..." data-sub="..." data-overview="..."
-          data-label="..."></div>
-   and load this script. Both modes can coexist.
+   USAGE — in Elementor, add an EMPTY Container/Section and set
+   Advanced → CSS ID to one of the MOUNT ids below. Load this
+   file once per page (HFCM / GTM / script tag):
+
+     <script src="https://cdn.jsdelivr.net/gh/jared-outlaw/or-market-insights@main/or-market-chart.js" defer></script>
+
+   Price-based components (median SOLD price etc.) are dormant
+   until the sheet's MedianPrice column starts filling — the
+   widget detects it automatically, nothing to reconfigure.
    ============================================================ */
 (function () {
   "use strict";
 
+  /* ---------------- CONFIG ---------------- */
+
+  var METRICS_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2oCT-Js7xcNGImUF19Uxiv5aqDK-OCTpBbhym4DUS1HGmPBJsH451QFdA7VG9HspIQ-qaMMvpPRDo/pub?gid=269797601&single=true&output=csv";
+  var BYTYPE_CSV  = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2oCT-Js7xcNGImUF19Uxiv5aqDK-OCTpBbhym4DUS1HGmPBJsH451QFdA7VG9HspIQ-qaMMvpPRDo/pub?gid=403990187&single=true&output=csv";
+
+  var MOUNTS = [
+    { selector: "#or-market-bozeman",     city: "Bozeman" },
+    { selector: "#or-market-bigsky",      city: "Big Sky" },
+    { selector: "#or-market-belgrade",    city: "Belgrade" },
+    { selector: "#or-market-threeforks",  city: "Three Forks" },
+    { selector: "#or-market-livingston",  city: "Livingston" }
+  ];
+
+  var ATTRIBUTION = "DATA PROVIDED BY THE BIG SKY COUNTRY MLS";
+
   var CHARTJS_SRC =
     "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js";
 
-  /* ==========================================================
-     MOUNTS — Mode A configuration. Add one entry per card.
-     "selector" matches the CSS ID you set on the Elementor
-     container. Edit copy/CSV here, commit to GitHub, done.
-  ========================================================== */
-  var MOUNTS = [
-    {
-      selector: "#or-market-bozeman",
-      csv: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2oCT-Js7xcNGImUF19Uxiv5aqDK-OCTpBbhym4DUS1HGmPBJsH451QFdA7VG9HspIQ-qaMMvpPRDo/pub?gid=0&single=true&output=csv",
-      eyebrow: "Bozeman, Montana",
-      heading: "How much do homes cost?",
-      sub: "This median sold price includes single-family homes, condos, and townhomes and is based on monthly data.",
-      overview: "There has been downward pressure on prices this year, but sales at higher price points continue to keep the median sales price steady.",
-      label: "Bozeman"
-    }
-    /* Future cities:
-    ,{
-      selector: "#or-market-bigsky",
-      csv: "PUBLISHED_CSV_URL_FOR_BIG_SKY_TAB",
-      eyebrow: "Big Sky, Montana",
-      heading: "How much do homes cost?",
-      sub: "...",
-      overview: "...",
-      label: "Big Sky"
-    }
-    */
-  ];
+  var SUBTYPE_LABELS = {
+    SingleFamilyResidence: "Single Family",
+    Townhouse: "Townhome",
+    Condominium: "Condo"
+  };
 
-  /* ---------- Styles (injected once) ---------- */
+  var MONTH_NAMES = ["January","February","March","April","May","June",
+    "July","August","September","October","November","December"];
+
+  /* ---------------- STYLES ---------------- */
+
   var CSS = "" +
-    ".or-market-card{--or-card-bg:#161616;--or-panel-bg:#1E1D1A;--or-ink:#F5F2EC;" +
-    "--or-ink-soft:#A7A29A;--or-accent:#C99A46;--or-accent-fill:rgba(201,154,70,.16);" +
-    "--or-line:#2A2A2A;box-sizing:border-box;max-width:760px;margin:0 auto;" +
-    "background:var(--or-card-bg);border:1px solid var(--or-line);border-radius:4px;" +
-    "padding:44px 36px 28px;font-family:'Inter','Segoe UI',-apple-system,Arial,sans-serif;" +
-    "color:var(--or-ink)}" +
-    ".or-market-card *{box-sizing:border-box;margin:0;padding:0}" +
-    ".or-eyebrow{text-align:center;font-family:'Oswald','Arial Narrow',sans-serif;" +
-    "font-size:.75rem;font-weight:500;letter-spacing:.28em;text-transform:uppercase;" +
-    "color:var(--or-accent);margin-bottom:12px}" +
-    ".or-heading{text-align:center;font-family:'Oswald','Arial Narrow',sans-serif;" +
-    "font-weight:500;font-size:1.7rem;letter-spacing:.04em;text-transform:uppercase;" +
-    "line-height:1.3;color:var(--or-ink)}" +
-    ".or-rule{display:block;width:56px;height:2px;background:var(--or-accent);" +
-    "margin:18px auto 26px}" +
-    ".or-sub{text-align:center;color:var(--or-ink-soft);font-size:.92rem;" +
-    "max-width:520px;margin:0 auto 30px;line-height:1.6}" +
-    ".or-scorecard{text-align:center;margin-bottom:8px}" +
-    ".or-big{font-family:'Oswald','Arial Narrow',sans-serif;font-size:3.4rem;" +
-    "font-weight:600;letter-spacing:.02em;color:var(--or-ink);min-height:1.2em}" +
-    ".or-yoy{margin-top:8px;font-size:.75rem;font-weight:700;letter-spacing:.18em;" +
-    "text-transform:uppercase;color:var(--or-accent);min-height:1em}" +
-    ".or-overview{background:var(--or-panel-bg);border-left:3px solid var(--or-accent);" +
-    "border-radius:2px;padding:22px 26px;margin:28px 0 32px}" +
-    ".or-overview h3{font-family:'Oswald','Arial Narrow',sans-serif;font-size:.8rem;" +
-    "font-weight:500;letter-spacing:.22em;text-transform:uppercase;" +
-    "color:var(--or-accent);margin-bottom:8px}" +
-    ".or-overview p{color:var(--or-ink-soft);font-size:.95rem;line-height:1.6}" +
-    ".or-chart-wrap{position:relative;width:100%;height:390px}" +
-    ".or-loading{position:absolute;inset:0;display:flex;align-items:center;" +
-    "justify-content:center;color:#6E6A63;font-size:.85rem;letter-spacing:.08em}" +
-    ".or-attribution{text-align:center;color:#6E6A63;font-size:.75rem;" +
-    "letter-spacing:.06em;margin-top:20px}" +
-    "@media (max-width:560px){.or-market-card{padding:30px 18px 22px}" +
-    ".or-big{font-size:2.5rem}.or-chart-wrap{height:300px}}";
+  ".or-mkt{--bg:#161616;--panel:#1E1D1A;--ink:#F5F2EC;--soft:#A7A29A;" +
+  "--gold:#C99A46;--goldfill:rgba(201,154,70,.16);--line:#2A2A2A;" +
+  "--green:#7FA65A;--red:#C2603E;" +
+  "box-sizing:border-box;max-width:980px;margin:0 auto;background:var(--bg);" +
+  "border:1px solid var(--line);border-radius:4px;padding:44px 40px 30px;" +
+  "font-family:'Inter','Segoe UI',-apple-system,Arial,sans-serif;color:var(--ink)}" +
+  ".or-mkt *{box-sizing:border-box;margin:0;padding:0}" +
+  ".or-mkt .hd-eyebrow{text-align:center;font-family:'Oswald','Arial Narrow',sans-serif;" +
+  "font-size:.75rem;font-weight:500;letter-spacing:.28em;text-transform:uppercase;" +
+  "color:var(--gold);margin-bottom:12px}" +
+  ".or-mkt .hd-title{text-align:center;font-family:'Oswald','Arial Narrow',sans-serif;" +
+  "font-weight:500;font-size:1.85rem;letter-spacing:.04em;text-transform:uppercase;line-height:1.3}" +
+  ".or-mkt .hd-rule{display:block;width:56px;height:2px;background:var(--gold);margin:18px auto 30px}" +
+  /* gauge */
+  ".or-mkt .gauge-wrap{display:flex;flex-wrap:wrap;gap:28px;align-items:center;" +
+  "background:var(--panel);border-left:3px solid var(--gold);border-radius:2px;" +
+  "padding:26px 30px;margin-bottom:34px}" +
+  ".or-mkt .gauge-svg{flex:0 0 210px;max-width:210px}" +
+  ".or-mkt .gauge-txt{flex:1;min-width:240px}" +
+  ".or-mkt .gauge-verdict{font-family:'Oswald','Arial Narrow',sans-serif;font-size:1.35rem;" +
+  "letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px}" +
+  ".or-mkt .gauge-verdict em{color:var(--gold);font-style:normal}" +
+  ".or-mkt .gauge-sentence{color:var(--soft);font-size:.97rem;line-height:1.65}" +
+  /* stat cards */
+  ".or-mkt .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:36px}" +
+  ".or-mkt .stat{background:var(--panel);border:1px solid var(--line);border-radius:3px;" +
+  "padding:20px 18px;text-align:center}" +
+  ".or-mkt .stat .lbl{font-family:'Oswald','Arial Narrow',sans-serif;font-size:.68rem;" +
+  "font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--soft);margin-bottom:10px}" +
+  ".or-mkt .stat .val{font-family:'Oswald','Arial Narrow',sans-serif;font-size:2rem;" +
+  "font-weight:600;color:var(--ink);line-height:1.1}" +
+  ".or-mkt .stat .note{margin-top:10px;font-size:.78rem;color:var(--soft);line-height:1.45}" +
+  /* charts */
+  ".or-mkt .chart-block{margin-bottom:36px}" +
+  ".or-mkt .chart-title{font-family:'Oswald','Arial Narrow',sans-serif;font-size:.85rem;" +
+  "font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:14px}" +
+  ".or-mkt .chart-wrap{position:relative;width:100%;height:300px}" +
+  /* table */
+  ".or-mkt table{width:100%;border-collapse:collapse;font-size:.92rem;margin-bottom:8px}" +
+  ".or-mkt th{font-family:'Oswald','Arial Narrow',sans-serif;font-size:.7rem;font-weight:500;" +
+  "letter-spacing:.16em;text-transform:uppercase;color:var(--soft);text-align:left;" +
+  "padding:10px 12px;border-bottom:1px solid var(--line)}" +
+  ".or-mkt td{padding:12px;border-bottom:1px solid var(--line);color:var(--ink)}" +
+  ".or-mkt td.up{color:var(--green)}.or-mkt td.down{color:var(--red)}" +
+  ".or-mkt .attrib{text-align:center;color:#6E6A63;font-size:.75rem;letter-spacing:.06em;margin-top:24px}" +
+  ".or-mkt .loading,.or-mkt .err{text-align:center;color:var(--soft);padding:60px 0;font-size:.9rem;letter-spacing:.06em}" +
+  "@media (max-width:760px){.or-mkt{padding:30px 18px 22px}" +
+  ".or-mkt .stats{grid-template-columns:repeat(2,1fr)}" +
+  ".or-mkt .gauge-wrap{flex-direction:column;text-align:center}" +
+  ".or-mkt .gauge-svg{margin:0 auto}.or-mkt .chart-wrap{height:240px}}";
 
   function injectStyles() {
-    if (document.getElementById("or-market-chart-css")) return;
+    if (document.getElementById("or-mkt-css")) return;
     var s = document.createElement("style");
-    s.id = "or-market-chart-css";
+    s.id = "or-mkt-css";
     s.textContent = CSS;
     document.head.appendChild(s);
   }
 
-  /* ---------- Chart.js loader (loads once) ---------- */
+  /* ---------------- DATA LAYER ---------------- */
+
+  var csvCache = {};
+  function getCSV(url) {
+    if (!csvCache[url]) {
+      csvCache[url] = fetch(url, { cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        })
+        .then(function (t) { return parseCSV(t); });
+    }
+    return csvCache[url];
+  }
+
+  function parseCSV(text) {
+    var rows = [], row = [], cur = "", inQ = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (inQ) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false;
+        } else cur += ch;
+      } else if (ch === '"') inQ = true;
+      else if (ch === ",") { row.push(cur); cur = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+        row = []; cur = "";
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+      } else cur += ch;
+    }
+    if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+    if (!rows.length) return [];
+    var header = rows[0].map(function (h) { return h.trim(); });
+    return rows.slice(1).map(function (r) {
+      var o = {};
+      header.forEach(function (h, i) { o[h] = (r[i] || "").trim(); });
+      return o;
+    });
+  }
+
+  function num(v) {
+    if (v === "" || v === null || v === undefined) return null;
+    var n = parseFloat(String(v).replace(/[$,%\s]/g, ""));
+    return isFinite(n) ? n : null;
+  }
+
+  /* ---------------- FORMAT HELPERS ---------------- */
+
+  function fmtUSD(v) { return "$" + Math.round(v).toLocaleString("en-US"); }
+  function fmtUSDk(v) {
+    return v >= 1000000 ? "$" + (Math.round(v / 10000) / 100) + "M"
+         : v >= 1000 ? "$" + Math.round(v / 1000) + "K" : "$" + Math.round(v);
+  }
+  function monthLabel(key) { // "2026-06" -> "Jun 26"
+    var p = key.split("-");
+    return MONTH_NAMES[Number(p[1]) - 1].slice(0, 3) + " " + p[0].slice(2);
+  }
+  function monthFull(key) { // "2026-06" -> "June"
+    return MONTH_NAMES[Number(key.split("-")[1]) - 1];
+  }
+
+  /* ---------------- INTERPRETATION ENGINE ---------------- */
+
+  function tempOf(ms) {
+    if (ms < 4) return "seller's";
+    if (ms <= 6) return "balanced";
+    return "buyer's";
+  }
+
+  function gaugeSentence(city, ms, pending, actives, salesTrendPct) {
+    var t = tempOf(ms);
+    var s = "With " + ms.toFixed(1) + " months of supply, " + city +
+      " is currently a " + (t === "balanced" ? "balanced" : t) + " market. ";
+    if (t === "seller's") {
+      s += "Homes are selling faster than new inventory is arriving, keeping the advantage with sellers.";
+    } else if (t === "balanced") {
+      s += "Supply and demand are roughly in step, giving neither buyers nor sellers a strong upper hand.";
+    } else {
+      s += "Inventory is outpacing the current sales pace, giving buyers more selection and more room to negotiate.";
+    }
+    if (pending !== null && actives !== null && actives > 0) {
+      var ratio = pending / actives;
+      if (ratio >= 0.5) s += " A high share of listings are already under contract, a sign demand remains active.";
+      else if (ratio <= 0.15) s += " Relatively few listings are under contract, suggesting demand is subdued.";
+    }
+    if (salesTrendPct !== null) {
+      if (salesTrendPct >= 15) s += " Sales activity is running ahead of the recent 12-month pace.";
+      else if (salesTrendPct <= -15) s += " Sales activity is running below the recent 12-month pace.";
+    }
+    return s;
+  }
+
+  /* ---------------- CHART.JS LOADER ---------------- */
+
   function withChartJs(cb) {
     if (window.Chart) { cb(); return; }
     var existing = document.querySelector("script[data-or-chartjs]");
@@ -110,229 +220,285 @@
     document.head.appendChild(s);
   }
 
-  /* ---------- CSV fetch + parse ---------- */
-  function parseCSV(text) {
-    var rows = [], row = [], cur = "", inQ = false;
-    for (var i = 0; i < text.length; i++) {
-      var ch = text[i];
-      if (inQ) {
-        if (ch === '"') {
-          if (text[i + 1] === '"') { cur += '"'; i++; }
-          else inQ = false;
-        } else cur += ch;
-      } else if (ch === '"') inQ = true;
-      else if (ch === ",") { row.push(cur); cur = ""; }
-      else if (ch === "\n" || ch === "\r") {
-        if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
-        row = []; cur = "";
-        if (ch === "\r" && text[i + 1] === "\n") i++;
-      } else cur += ch;
+  /* ---------------- GAUGE (SVG) ---------------- */
+
+  function gaugeSVG(ms) {
+    // Semicircle: 0 months (left) .. 10+ months (right).
+    var clamped = Math.max(0, Math.min(10, ms));
+    var angle = Math.PI * (1 - clamped / 10); // PI..0
+    var cx = 105, cy = 100, r = 82;
+    var nx = cx + r * 0.82 * Math.cos(angle);
+    var ny = cy - r * 0.82 * Math.sin(angle);
+    function arc(a0, a1, color) {
+      var x0 = cx + r * Math.cos(a0), y0 = cy - r * Math.sin(a0);
+      var x1 = cx + r * Math.cos(a1), y1 = cy - r * Math.sin(a1);
+      return '<path d="M' + x0 + ' ' + y0 + ' A' + r + ' ' + r +
+        ' 0 0 1 ' + x1 + ' ' + y1 + '" stroke="' + color +
+        '" stroke-width="14" fill="none" stroke-linecap="round"/>';
     }
-    if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
-    return rows;
+    // zones: seller's 0-4 (gold), balanced 4-6 (soft), buyer's 6-10 (dim)
+    var A = function (m) { return Math.PI * (1 - m / 10); };
+    return '<svg viewBox="0 0 210 118" xmlns="http://www.w3.org/2000/svg">' +
+      arc(A(0), A(3.9), "#C99A46") +
+      arc(A(4.1), A(5.9), "#8A857D") +
+      arc(A(6.1), A(10), "#4A463F") +
+      '<line x1="' + cx + '" y1="' + cy + '" x2="' + nx + '" y2="' + ny +
+      '" stroke="#F5F2EC" stroke-width="3" stroke-linecap="round"/>' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#F5F2EC"/>' +
+      '<text x="18" y="116" fill="#8A857D" font-size="9" font-family="Inter,Arial">SELLER\u2019S</text>' +
+      '<text x="88" y="14" fill="#8A857D" font-size="9" font-family="Inter,Arial">BALANCED</text>' +
+      '<text x="158" y="116" fill="#8A857D" font-size="9" font-family="Inter,Arial">BUYER\u2019S</text>' +
+      '</svg>';
   }
 
-  function getData(url, cb) {
-    fetch(url, { cache: "no-store" })
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.text();
-      })
-      .then(function (text) {
-        var rows = parseCSV(text);
-        var data = [];
-        for (var i = 1; i < rows.length; i++) { // skip header row
-          var label = (rows[i][0] || "").trim();
-          var price = parseFloat(String(rows[i][1]).replace(/[$,\s]/g, ""));
-          if (label && isFinite(price)) data.push([label, price]);
-        }
-        cb(data.length ? data : null);
-      })
-      .catch(function (err) {
-        console.warn("[or-market-chart] data fetch failed:", err);
-        cb(null);
-      });
-  }
+  /* ---------------- RENDER ---------------- */
 
-  /* ---------- Card markup ---------- */
   var uid = 0;
-  function buildCard(host) {
+
+  function render(host, city, metricRows, typeRows) {
     uid++;
-    var d = host.dataset;
-    var eyebrow = d.eyebrow || "";
-    var heading = d.heading || "How much do homes cost?";
-    var sub = d.sub || "";
-    var overview = d.overview || "";
+    var id = uid;
 
-    var card = document.createElement("div");
-    card.className = "or-market-card";
-    card.innerHTML =
-      (eyebrow ? '<p class="or-eyebrow"></p>' : "") +
-      '<h2 class="or-heading"><span class="or-heading-text"></span>' +
-      '<span class="or-rule"></span></h2>' +
-      (sub ? '<p class="or-sub"></p>' : "") +
-      '<div class="or-scorecard">' +
-      '<div class="or-big" id="or-big-' + uid + '">&nbsp;</div>' +
-      '<div class="or-yoy" id="or-yoy-' + uid + '">&nbsp;</div></div>' +
-      (overview
-        ? '<div class="or-overview"><h3>Overview</h3><p class="or-overview-text"></p></div>'
-        : "") +
-      '<div class="or-chart-wrap"><canvas id="or-canvas-' + uid + '"></canvas>' +
-      '<div class="or-loading" id="or-loading-' + uid + '">Loading market data\u2026</div></div>' +
-      '<p class="or-attribution">DATA PROVIDED BY THE BIG SKY COUNTRY MLS</p>';
+    var rows = metricRows
+      .filter(function (r) { return r.City === city; })
+      .sort(function (a, b) { return a.Month < b.Month ? -1 : 1; });
 
-    /* Text set via textContent (not innerHTML) so quotes/ampersands are safe */
-    if (eyebrow) card.querySelector(".or-eyebrow").textContent = eyebrow;
-    card.querySelector(".or-heading-text").textContent = heading;
-    if (sub) card.querySelector(".or-sub").textContent = sub;
-    if (overview) card.querySelector(".or-overview-text").textContent = overview;
-
-    host.appendChild(card);
-    return uid;
-  }
-
-  /* ---------- Render ---------- */
-  function fmtUSD(v) { return "$" + Math.round(v).toLocaleString("en-US"); }
-
-  function draw(id, host, monthlyData) {
-    var loading = document.getElementById("or-loading-" + id);
-    if (loading) loading.style.display = "none";
-
-    var labels = monthlyData.map(function (d) { return d[0]; });
-    var prices = monthlyData.map(function (d) { return d[1]; });
-
-    var card = host.querySelector(".or-market-card");
-    var cs = getComputedStyle(card);
-    var accent = cs.getPropertyValue("--or-accent").trim();
-    var accentFill = cs.getPropertyValue("--or-accent-fill").trim();
-    var seriesLabel = host.dataset.label || "Median";
-
-    var yMin = Math.floor(Math.min.apply(null, prices) / 50000) * 50000;
-
-    new Chart(document.getElementById("or-canvas-" + id), {
-      type: "line",
-      data: {
-        labels: labels,
-        datasets: [{
-          label: seriesLabel,
-          data: prices,
-          borderColor: accent,
-          borderWidth: 2,
-          backgroundColor: accentFill,
-          fill: true,
-          tension: 0.35,
-          pointBackgroundColor: accent,
-          pointBorderColor: accent,
-          pointRadius: 3,
-          pointHoverRadius: 6,
-          pointHoverBackgroundColor: "#F5F2EC"
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "nearest", intersect: false },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: "#F5F2EC",
-            titleColor: "#0D0D0D",
-            bodyColor: "#0D0D0D",
-            titleFont: { weight: "600" },
-            padding: 10,
-            displayColors: false,
-            callbacks: {
-              label: function (c) {
-                return c.dataset.label + ": " + fmtUSD(c.parsed.y);
-              }
-            }
-          }
-        },
-        scales: {
-          y: {
-            ticks: {
-              callback: function (v) {
-                return v >= 1000 ? "$" + (v / 1000) + "K" : "$" + v;
-              },
-              color: "#8A857D",
-              font: { size: 12 }
-            },
-            min: yMin,
-            grid: { color: "rgba(245,242,236,.06)" },
-            border: { display: false }
-          },
-          x: {
-            ticks: {
-              color: "#8A857D",
-              font: { size: 11 },
-              maxRotation: 45,
-              minRotation: 45,
-              autoSkip: true,
-              maxTicksLimit: 20,
-              callback: function (val, i) {
-                return i % 4 === 0 ? this.getLabelForValue(val) : "";
-              }
-            },
-            grid: { display: false },
-            border: { display: false }
-          }
-        }
-      }
-    });
-
-    /* Scorecard derived from the same data */
-    var latest = prices[prices.length - 1];
-    document.getElementById("or-big-" + id).textContent = fmtUSD(latest);
-    if (prices.length >= 13) {
-      var prevYr = prices[prices.length - 13];
-      var yoy = ((latest - prevYr) / prevYr * 100).toFixed(2);
-      document.getElementById("or-yoy-" + id).textContent =
-        "(" + (yoy >= 0 ? "+" : "") + yoy + "%) Year Over Year";
-    }
-  }
-
-  function initHost(host) {
-    if (host.getAttribute("data-or-initialized")) return;
-    host.setAttribute("data-or-initialized", "1");
-
-    var csvUrl = host.dataset.csv;
-    if (!csvUrl) {
-      console.warn("[or-market-chart] missing data-csv attribute", host);
+    if (!rows.length) {
+      host.innerHTML = '<div class="or-mkt"><div class="err">Market data for ' +
+        city + ' is temporarily unavailable.</div></div>';
       return;
     }
-    var id = buildCard(host);
-    getData(csvUrl, function (data) {
-      if (!data) {
-        var loading = document.getElementById("or-loading-" + id);
-        if (loading) loading.textContent = "Market data is temporarily unavailable.";
-        return;
+
+    var now = new Date();
+    var curKey = now.getFullYear() + "-" + ("0" + (now.getMonth() + 1)).slice(-2);
+    var curRow = null, i;
+    for (i = 0; i < rows.length; i++) if (rows[i].Month === curKey) curRow = rows[i];
+    if (!curRow) curRow = rows[rows.length - 1];
+
+    // Last FULL month (headline stats) = latest month before current
+    var fullRows = rows.filter(function (r) { return r.Month < curKey; });
+    var lastFull = fullRows.length ? fullRows[fullRows.length - 1] : curRow;
+
+    var ms = num(curRow.MonthsSupply);
+    var actives = num(curRow.ActiveListings);
+    var pending = num(curRow.PendingSales);
+    var listPrice = num(curRow.MedianListPrice);
+    var soldLast = num(lastFull.ClosedSales);
+    var domLast = num(lastFull.MedianDOM);
+
+    // 12-month sales trend for interpretation
+    var prior12 = fullRows.slice(-13, -1).map(function (r) { return num(r.ClosedSales); })
+      .filter(function (v) { return v !== null; });
+    var avg12 = prior12.length
+      ? prior12.reduce(function (a, b) { return a + b; }, 0) / prior12.length : null;
+    var trendPct = (avg12 && soldLast !== null) ? ((soldLast - avg12) / avg12) * 100 : null;
+
+    /* ---- build DOM ---- */
+    var card = document.createElement("div");
+    card.className = "or-mkt";
+
+    var html = '<p class="hd-eyebrow">' + city + ', Montana</p>' +
+      '<h2 class="hd-title">Market Report<span class="hd-rule"></span></h2>';
+
+    /* gauge */
+    if (ms !== null) {
+      var verdictWord = tempOf(ms) === "balanced" ? "Balanced Market"
+        : tempOf(ms) === "seller's" ? "Seller\u2019s Market" : "Buyer\u2019s Market";
+      html += '<div class="gauge-wrap"><div class="gauge-svg">' + gaugeSVG(ms) +
+        '</div><div class="gauge-txt"><div class="gauge-verdict">Currently a <em>' +
+        verdictWord + '</em></div><p class="gauge-sentence" id="or-gs-' + id + '"></p></div></div>';
+    }
+
+    /* stat cards */
+    html += '<div class="stats">' +
+      statCard("Homes Sold (" + monthFull(lastFull.Month) + ")",
+        soldLast === null ? "—" : String(soldLast),
+        trendPct === null ? "" :
+          (Math.abs(trendPct) < 8 ? "In line with the 12-month pace" :
+            (trendPct > 0 ? "Up " : "Down ") + Math.abs(Math.round(trendPct)) + "% vs the 12-month pace")) +
+      statCard("Median Days on Market",
+        domLast === null ? "—" : String(Math.round(domLast)),
+        domLast === null ? "" : "Half of " + monthFull(lastFull.Month) +
+          "\u2019s sales went under contract within " + Math.round(domLast) + " days") +
+      statCard("Months of Supply",
+        ms === null ? "—" : ms.toFixed(1),
+        actives === null ? "" : actives + " active listings" +
+          (pending !== null ? " \u00B7 " + pending + " under contract" : "")) +
+      statCard("Median List Price",
+        listPrice === null ? "—" : fmtUSDk(listPrice),
+        "Median asking price of current active listings") +
+      '</div>';
+
+    /* chart blocks */
+    html += '<div class="chart-block"><div class="chart-title">Homes Sold Per Month</div>' +
+      '<div class="chart-wrap"><canvas id="or-c1-' + id + '"></canvas></div></div>' +
+      '<div class="chart-block"><div class="chart-title">Median Days on Market</div>' +
+      '<div class="chart-wrap"><canvas id="or-c2-' + id + '"></canvas></div></div>';
+
+    /* type table */
+    var typeData = buildTypeTable(city, typeRows, lastFull.Month);
+    if (typeData.length) {
+      html += '<div class="chart-title">By Property Type \u2014 ' +
+        monthFull(lastFull.Month) + '</div><table><thead><tr>' +
+        '<th>Type</th><th>Homes Sold</th><th>Median DOM</th><th>Sales vs Last Year</th>' +
+        '</tr></thead><tbody>';
+      typeData.forEach(function (t) {
+        html += '<tr><td>' + t.label + '</td><td>' + t.sold + '</td><td>' +
+          (t.dom === null ? "—" : Math.round(t.dom)) + '</td><td class="' +
+          (t.yoy === null ? "" : t.yoy >= 0 ? "up" : "down") + '">' +
+          (t.yoy === null ? "—" : (t.yoy >= 0 ? "+" : "") + t.yoy + "%") + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+
+    html += '<p class="attrib">' + ATTRIBUTION + '</p>';
+    card.innerHTML = html;
+    host.innerHTML = "";
+    host.appendChild(card);
+
+    /* sentence via textContent (safe) */
+    if (ms !== null) {
+      document.getElementById("or-gs-" + id).textContent =
+        gaugeSentence(city, ms, pending, actives, trendPct);
+    }
+
+    /* charts */
+    var last12 = fullRows.slice(-12);
+    withChartJs(function () {
+      barChart("or-c1-" + id,
+        last12.map(function (r) { return monthLabel(r.Month); }),
+        last12.map(function (r) { return num(r.ClosedSales); }));
+      lineChart("or-c2-" + id,
+        last12.map(function (r) { return monthLabel(r.Month); }),
+        last12.map(function (r) { return num(r.MedianDOM); }),
+        " days");
+    });
+  }
+
+  function statCard(lbl, val, note) {
+    return '<div class="stat"><div class="lbl">' + lbl + '</div>' +
+      '<div class="val">' + val + '</div>' +
+      '<div class="note">' + note + '</div></div>';
+  }
+
+  function buildTypeTable(city, typeRows, monthKey) {
+    if (!typeRows) return [];
+    var lastYearKey = (Number(monthKey.slice(0, 4)) - 1) + monthKey.slice(4);
+    var out = [];
+    Object.keys(SUBTYPE_LABELS).forEach(function (st) {
+      var cur = null, prev = null;
+      typeRows.forEach(function (r) {
+        if (r.City !== city || r.PropertySubType !== st) return;
+        if (r.Month === monthKey) cur = r;
+        if (r.Month === lastYearKey) prev = r;
+      });
+      if (!cur) return;
+      var sold = num(cur.ClosedSales) || 0;
+      var prevSold = prev ? num(prev.ClosedSales) : null;
+      out.push({
+        label: SUBTYPE_LABELS[st],
+        sold: sold,
+        dom: num(cur.MedianDOM),
+        yoy: (prevSold && prevSold > 0)
+          ? Math.round(((sold - prevSold) / prevSold) * 100) : null
+      });
+    });
+    return out;
+  }
+
+  /* ---------------- CHART BUILDERS ---------------- */
+
+  var AXIS = { color: "#8A857D", size: 11 };
+
+  function baseOpts(suffix) {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#F5F2EC", titleColor: "#0D0D0D",
+          bodyColor: "#0D0D0D", padding: 10, displayColors: false,
+          callbacks: {
+            label: function (c) { return c.parsed.y + (suffix || ""); }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { color: AXIS.color, font: { size: AXIS.size } },
+          grid: { color: "rgba(245,242,236,.06)" },
+          border: { display: false }
+        },
+        x: {
+          ticks: { color: AXIS.color, font: { size: AXIS.size },
+                   maxRotation: 45, minRotation: 45 },
+          grid: { display: false },
+          border: { display: false }
+        }
       }
-      withChartJs(function () { draw(id, host, data); });
+    };
+  }
+
+  function barChart(canvasId, labels, data) {
+    new Chart(document.getElementById(canvasId), {
+      type: "bar",
+      data: { labels: labels, datasets: [{
+        data: data,
+        backgroundColor: "rgba(201,154,70,.55)",
+        hoverBackgroundColor: "#C99A46",
+        borderRadius: 2
+      }]},
+      options: baseOpts(" sold")
+    });
+  }
+
+  function lineChart(canvasId, labels, data, suffix) {
+    new Chart(document.getElementById(canvasId), {
+      type: "line",
+      data: { labels: labels, datasets: [{
+        data: data,
+        borderColor: "#C99A46",
+        borderWidth: 2,
+        backgroundColor: "rgba(201,154,70,.16)",
+        fill: true,
+        tension: 0.35,
+        pointBackgroundColor: "#C99A46",
+        pointBorderColor: "#C99A46",
+        pointRadius: 3,
+        pointHoverRadius: 6,
+        pointHoverBackgroundColor: "#F5F2EC",
+        spanGaps: true
+      }]},
+      options: baseOpts(suffix)
+    });
+  }
+
+  /* ---------------- INIT ---------------- */
+
+  function initHost(host, city) {
+    if (host.getAttribute("data-or-init")) return;
+    host.setAttribute("data-or-init", "1");
+    host.innerHTML = '<div class="or-mkt"><div class="loading">Loading market data\u2026</div></div>';
+
+    Promise.all([
+      getCSV(METRICS_CSV),
+      getCSV(BYTYPE_CSV).catch(function () { return null; })
+    ]).then(function (res) {
+      render(host, city, res[0], res[1]);
+    }).catch(function (e) {
+      console.warn("[or-market] load failed:", e);
+      host.innerHTML = '<div class="or-mkt"><div class="err">Market data is temporarily unavailable.</div></div>';
     });
   }
 
   function init() {
     injectStyles();
-
-    /* Mode A: config-driven mounts onto Elementor containers by CSS ID */
-    for (var m = 0; m < MOUNTS.length; m++) {
-      var cfg = MOUNTS[m];
-      var el = document.querySelector(cfg.selector);
-      if (!el) continue; // container not on this page — skip silently
-      if (!el.dataset.csv) {
-        el.dataset.csv = cfg.csv || "";
-        if (cfg.eyebrow) el.dataset.eyebrow = cfg.eyebrow;
-        if (cfg.heading) el.dataset.heading = cfg.heading;
-        if (cfg.sub) el.dataset.sub = cfg.sub;
-        if (cfg.overview) el.dataset.overview = cfg.overview;
-        if (cfg.label) el.dataset.label = cfg.label;
-      }
-      initHost(el);
-    }
-
-    /* Mode B: data-attribute placeholder divs */
-    var hosts = document.querySelectorAll(".or-market-chart");
-    for (var i = 0; i < hosts.length; i++) initHost(hosts[i]);
+    MOUNTS.forEach(function (m) {
+      var el = document.querySelector(m.selector);
+      if (el) initHost(el, m.city);
+    });
   }
 
   if (document.readyState === "loading") {
