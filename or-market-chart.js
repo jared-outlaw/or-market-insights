@@ -30,6 +30,11 @@
   var METRICS_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2oCT-Js7xcNGImUF19Uxiv5aqDK-OCTpBbhym4DUS1HGmPBJsH451QFdA7VG9HspIQ-qaMMvpPRDo/pub?gid=269797601&single=true&output=csv";
   var BYTYPE_CSV  = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2oCT-Js7xcNGImUF19Uxiv5aqDK-OCTpBbhym4DUS1HGmPBJsH451QFdA7VG9HspIQ-qaMMvpPRDo/pub?gid=403990187&single=true&output=csv";
 
+  // Brand accent — the ONLY two lines to touch when the gold rebrands.
+  // Keep GOLD_RGB as the exact r,g,b of GOLD (used to build translucent fills).
+  var GOLD = "#8D4A2D";
+  var GOLD_RGB = "141,74,45";
+
   var MOUNTS = [
     { selector: "#or-market-bozeman",     city: "Bozeman" },
     { selector: "#or-market-bigsky",      city: "Big Sky" },
@@ -56,7 +61,7 @@
 
   var CSS = "" +
   ".or-mkt{--bg:#161616;--panel:#1E1D1A;--ink:#F5F2EC;--soft:#A7A29A;" +
-  "--gold:#C99A46;--goldfill:rgba(201,154,70,.16);--line:#2A2A2A;" +
+  "--gold:" + GOLD + ";--goldfill:rgba(" + GOLD_RGB + ",.16);--line:#2A2A2A;" +
   "--green:#7FA65A;--red:#C2603E;" +
   "box-sizing:border-box;max-width:980px;margin:0 auto;background:var(--bg);" +
   "border:1px solid var(--line);border-radius:4px;padding:44px 40px 30px;" +
@@ -64,7 +69,7 @@
   ".or-mkt *{box-sizing:border-box;margin:0;padding:0}" +
   ".or-mkt .hd-eyebrow{text-align:center;font-family:'Oswald','Arial Narrow',sans-serif;" +
   "font-size:.75rem;font-weight:500;letter-spacing:.28em;text-transform:uppercase;" +
-  "color:var(--gold);margin-bottom:12px}" +
+  "color:var(--ink);margin-bottom:12px}" +
   ".or-mkt .hd-title{text-align:center;font-family:'Oswald','Arial Narrow',sans-serif;" +
   "font-weight:500;font-size:1.85rem;letter-spacing:.04em;text-transform:uppercase;line-height:1.3}" +
   ".or-mkt .hd-rule{display:block;width:56px;height:2px;background:var(--gold);margin:18px auto 30px}" +
@@ -90,7 +95,7 @@
   /* charts */
   ".or-mkt .chart-block{margin-bottom:36px}" +
   ".or-mkt .chart-title{font-family:'Oswald','Arial Narrow',sans-serif;font-size:.85rem;" +
-  "font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:14px}" +
+  "font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--ink);margin-bottom:14px}" +
   ".or-mkt .chart-wrap{position:relative;width:100%;height:300px}" +
   /* table */
   ".or-mkt table{width:100%;border-collapse:collapse;font-size:.92rem;margin-bottom:8px}" +
@@ -238,15 +243,18 @@
     }
     // zones: seller's 0-4 (gold), balanced 4-6 (soft), buyer's 6-10 (dim)
     var A = function (m) { return Math.PI * (1 - m / 10); };
-    return '<svg viewBox="0 0 210 118" xmlns="http://www.w3.org/2000/svg">' +
-      arc(A(0), A(3.9), "#C99A46") +
+    // viewBox extends 18px above the 0 0 210 118 box so the "BALANCED" label
+    // has clear room above the arc's peak (peak paint reaches y\u224811 with the
+    // 14px stroke) instead of sitting on top of it.
+    return '<svg viewBox="0 -18 210 136" xmlns="http://www.w3.org/2000/svg">' +
+      arc(A(0), A(3.9), GOLD) +
       arc(A(4.1), A(5.9), "#8A857D") +
       arc(A(6.1), A(10), "#4A463F") +
       '<line x1="' + cx + '" y1="' + cy + '" x2="' + nx + '" y2="' + ny +
       '" stroke="#F5F2EC" stroke-width="3" stroke-linecap="round"/>' +
       '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#F5F2EC"/>' +
       '<text x="18" y="116" fill="#8A857D" font-size="9" font-family="Inter,Arial">SELLER\u2019S</text>' +
-      '<text x="88" y="14" fill="#8A857D" font-size="9" font-family="Inter,Arial">BALANCED</text>' +
+      '<text x="105" y="-6" text-anchor="middle" fill="#8A857D" font-size="9" font-family="Inter,Arial">BALANCED</text>' +
       '<text x="158" y="116" fill="#8A857D" font-size="9" font-family="Inter,Arial">BUYER\u2019S</text>' +
       '</svg>';
   }
@@ -446,8 +454,8 @@
       type: "bar",
       data: { labels: labels, datasets: [{
         data: data,
-        backgroundColor: "rgba(201,154,70,.55)",
-        hoverBackgroundColor: "#C99A46",
+        backgroundColor: "rgba(" + GOLD_RGB + ",.55)",
+        hoverBackgroundColor: GOLD,
         borderRadius: 2
       }]},
       options: baseOpts(" sold")
@@ -459,13 +467,13 @@
       type: "line",
       data: { labels: labels, datasets: [{
         data: data,
-        borderColor: "#C99A46",
+        borderColor: GOLD,
         borderWidth: 2,
-        backgroundColor: "rgba(201,154,70,.16)",
+        backgroundColor: "rgba(" + GOLD_RGB + ",.16)",
         fill: true,
         tension: 0.35,
-        pointBackgroundColor: "#C99A46",
-        pointBorderColor: "#C99A46",
+        pointBackgroundColor: GOLD,
+        pointBorderColor: GOLD,
         pointRadius: 3,
         pointHoverRadius: 6,
         pointHoverBackgroundColor: "#F5F2EC",
