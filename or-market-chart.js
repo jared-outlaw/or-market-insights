@@ -1,9 +1,8 @@
-/* ============================================================
    OUTLAW REALTY — MARKET REPORT WIDGET  (v3)
    ------------------------------------------------------------
    Renders a full market report card per city from the live
    Google Sheets pipeline (metrics + by_type tabs):
-
+ 
      • Market temperature gauge (months of supply) with an
        auto-generated interpretation sentence
      • Headline stat cards: Homes Sold, Median DOM,
@@ -11,30 +10,30 @@
        generated one-line read
      • Trend charts: monthly home sales + median days on market
      • Property type table (last full month, with YoY sales)
-
+ 
    USAGE — in Elementor, add an EMPTY Container/Section and set
    Advanced → CSS ID to one of the MOUNT ids below. Load this
    file once per page (HFCM / GTM / script tag):
-
+ 
      <script src="https://cdn.jsdelivr.net/gh/jared-outlaw/or-market-insights@main/or-market-chart.js" defer></script>
-
+ 
    Price-based components (median SOLD price etc.) are dormant
    until the sheet's MedianPrice column starts filling — the
    widget detects it automatically, nothing to reconfigure.
    ============================================================ */
 (function () {
   "use strict";
-
+ 
   /* ---------------- CONFIG ---------------- */
-
+ 
   var METRICS_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2oCT-Js7xcNGImUF19Uxiv5aqDK-OCTpBbhym4DUS1HGmPBJsH451QFdA7VG9HspIQ-qaMMvpPRDo/pub?gid=269797601&single=true&output=csv";
   var BYTYPE_CSV  = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2oCT-Js7xcNGImUF19Uxiv5aqDK-OCTpBbhym4DUS1HGmPBJsH451QFdA7VG9HspIQ-qaMMvpPRDo/pub?gid=403990187&single=true&output=csv";
-
+ 
   // Brand accent — the ONLY two lines to touch when the gold rebrands.
   // Keep GOLD_RGB as the exact r,g,b of GOLD (used to build translucent fills).
   var GOLD = "#8D4A2D";
   var GOLD_RGB = "141,74,45";
-
+ 
   var MOUNTS = [
     { selector: "#or-market-bozeman",     city: "Bozeman" },
     { selector: "#or-market-bigsky",      city: "Big Sky" },
@@ -42,23 +41,23 @@
     { selector: "#or-market-threeforks",  city: "Three Forks" },
     { selector: "#or-market-livingston",  city: "Livingston" }
   ];
-
+ 
   var ATTRIBUTION = "DATA PROVIDED BY THE BIG SKY COUNTRY MLS";
-
+ 
   var CHARTJS_SRC =
     "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js";
-
+ 
   var SUBTYPE_LABELS = {
     SingleFamilyResidence: "Single Family",
     Townhouse: "Townhome",
     Condominium: "Condo"
   };
-
+ 
   var MONTH_NAMES = ["January","February","March","April","May","June",
     "July","August","September","October","November","December"];
-
+ 
   /* ---------------- STYLES ---------------- */
-
+ 
   var CSS = "" +
   ".or-mkt{--bg:#161616;--panel:#1E1D1A;--ink:#F5F2EC;--soft:#A7A29A;" +
   "--gold:" + GOLD + ";--goldfill:rgba(" + GOLD_RGB + ",.16);--line:#2A2A2A;" +
@@ -71,7 +70,8 @@
   "font-size:.75rem;font-weight:500;letter-spacing:.28em;text-transform:uppercase;" +
   "color:var(--ink);margin-bottom:12px}" +
   ".or-mkt .hd-title{text-align:center;font-family:'Oswald','Arial Narrow',sans-serif;" +
-  "font-weight:500;font-size:1.85rem;letter-spacing:.04em;text-transform:uppercase;line-height:1.3}" +
+  "font-weight:500;font-size:1.85rem;letter-spacing:.04em;text-transform:uppercase;line-height:1.3;" +
+  "color:var(--ink) !important}" +
   ".or-mkt .hd-rule{display:block;width:56px;height:2px;background:var(--gold);margin:18px auto 30px}" +
   /* gauge */
   ".or-mkt .gauge-wrap{display:flex;flex-wrap:wrap;gap:28px;align-items:center;" +
@@ -81,7 +81,7 @@
   ".or-mkt .gauge-txt{flex:1;min-width:240px}" +
   ".or-mkt .gauge-verdict{font-family:'Oswald','Arial Narrow',sans-serif;font-size:1.35rem;" +
   "letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px}" +
-  ".or-mkt .gauge-verdict em{color:var(--gold);font-style:normal}" +
+  ".or-mkt .gauge-verdict em{color:var(--ink);font-style:normal}" +
   ".or-mkt .gauge-sentence{color:var(--soft);font-size:.97rem;line-height:1.65}" +
   /* stat cards */
   ".or-mkt .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:36px}" +
@@ -110,7 +110,7 @@
   ".or-mkt .stats{grid-template-columns:repeat(2,1fr)}" +
   ".or-mkt .gauge-wrap{flex-direction:column;text-align:center}" +
   ".or-mkt .gauge-svg{margin:0 auto}.or-mkt .chart-wrap{height:240px}}";
-
+ 
   function injectStyles() {
     if (document.getElementById("or-mkt-css")) return;
     var s = document.createElement("style");
@@ -118,9 +118,9 @@
     s.textContent = CSS;
     document.head.appendChild(s);
   }
-
+ 
   /* ---------------- DATA LAYER ---------------- */
-
+ 
   var csvCache = {};
   function getCSV(url) {
     if (!csvCache[url]) {
@@ -133,7 +133,7 @@
     }
     return csvCache[url];
   }
-
+ 
   function parseCSV(text) {
     var rows = [], row = [], cur = "", inQ = false;
     for (var i = 0; i < text.length; i++) {
@@ -159,15 +159,15 @@
       return o;
     });
   }
-
+ 
   function num(v) {
     if (v === "" || v === null || v === undefined) return null;
     var n = parseFloat(String(v).replace(/[$,%\s]/g, ""));
     return isFinite(n) ? n : null;
   }
-
+ 
   /* ---------------- FORMAT HELPERS ---------------- */
-
+ 
   function fmtUSD(v) { return "$" + Math.round(v).toLocaleString("en-US"); }
   function fmtUSDk(v) {
     return v >= 1000000 ? "$" + (Math.round(v / 10000) / 100) + "M"
@@ -180,15 +180,15 @@
   function monthFull(key) { // "2026-06" -> "June"
     return MONTH_NAMES[Number(key.split("-")[1]) - 1];
   }
-
+ 
   /* ---------------- INTERPRETATION ENGINE ---------------- */
-
+ 
   function tempOf(ms) {
     if (ms < 4) return "seller's";
     if (ms <= 6) return "balanced";
     return "buyer's";
   }
-
+ 
   function gaugeSentence(city, ms, pending, actives, salesTrendPct) {
     var t = tempOf(ms);
     var s = "With " + ms.toFixed(1) + " months of supply, " + city +
@@ -211,9 +211,9 @@
     }
     return s;
   }
-
+ 
   /* ---------------- CHART.JS LOADER ---------------- */
-
+ 
   function withChartJs(cb) {
     if (window.Chart) { cb(); return; }
     var existing = document.querySelector("script[data-or-chartjs]");
@@ -224,9 +224,9 @@
     s.onload = cb;
     document.head.appendChild(s);
   }
-
+ 
   /* ---------------- GAUGE (SVG) ---------------- */
-
+ 
   function gaugeSVG(ms) {
     // Semicircle: 0 months (left) .. 10+ months (right).
     var clamped = Math.max(0, Math.min(10, ms));
@@ -258,56 +258,56 @@
       '<text x="158" y="116" fill="#8A857D" font-size="9" font-family="Inter,Arial">BUYER\u2019S</text>' +
       '</svg>';
   }
-
+ 
   /* ---------------- RENDER ---------------- */
-
+ 
   var uid = 0;
-
+ 
   function render(host, city, metricRows, typeRows) {
     uid++;
     var id = uid;
-
+ 
     var rows = metricRows
       .filter(function (r) { return r.City === city; })
       .sort(function (a, b) { return a.Month < b.Month ? -1 : 1; });
-
+ 
     if (!rows.length) {
       host.innerHTML = '<div class="or-mkt"><div class="err">Market data for ' +
         city + ' is temporarily unavailable.</div></div>';
       return;
     }
-
+ 
     var now = new Date();
     var curKey = now.getFullYear() + "-" + ("0" + (now.getMonth() + 1)).slice(-2);
     var curRow = null, i;
     for (i = 0; i < rows.length; i++) if (rows[i].Month === curKey) curRow = rows[i];
     if (!curRow) curRow = rows[rows.length - 1];
-
+ 
     // Last FULL month (headline stats) = latest month before current
     var fullRows = rows.filter(function (r) { return r.Month < curKey; });
     var lastFull = fullRows.length ? fullRows[fullRows.length - 1] : curRow;
-
+ 
     var ms = num(curRow.MonthsSupply);
     var actives = num(curRow.ActiveListings);
     var pending = num(curRow.PendingSales);
     var listPrice = num(curRow.MedianListPrice);
     var soldLast = num(lastFull.ClosedSales);
     var domLast = num(lastFull.MedianDOM);
-
+ 
     // 12-month sales trend for interpretation
     var prior12 = fullRows.slice(-13, -1).map(function (r) { return num(r.ClosedSales); })
       .filter(function (v) { return v !== null; });
     var avg12 = prior12.length
       ? prior12.reduce(function (a, b) { return a + b; }, 0) / prior12.length : null;
     var trendPct = (avg12 && soldLast !== null) ? ((soldLast - avg12) / avg12) * 100 : null;
-
+ 
     /* ---- build DOM ---- */
     var card = document.createElement("div");
     card.className = "or-mkt";
-
+ 
     var html = '<p class="hd-eyebrow">' + city + ', Montana</p>' +
       '<h2 class="hd-title">Market Report<span class="hd-rule"></span></h2>';
-
+ 
     /* gauge */
     if (ms !== null) {
       var verdictWord = tempOf(ms) === "balanced" ? "Balanced Market"
@@ -316,7 +316,7 @@
         '</div><div class="gauge-txt"><div class="gauge-verdict">Currently a <em>' +
         verdictWord + '</em></div><p class="gauge-sentence" id="or-gs-' + id + '"></p></div></div>';
     }
-
+ 
     /* stat cards */
     html += '<div class="stats">' +
       statCard("Homes Sold (" + monthFull(lastFull.Month) + ")",
@@ -336,13 +336,13 @@
         listPrice === null ? "—" : fmtUSDk(listPrice),
         "Median asking price of current active listings") +
       '</div>';
-
+ 
     /* chart blocks */
     html += '<div class="chart-block"><div class="chart-title">Homes Sold Per Month</div>' +
       '<div class="chart-wrap"><canvas id="or-c1-' + id + '"></canvas></div></div>' +
       '<div class="chart-block"><div class="chart-title">Median Days on Market</div>' +
       '<div class="chart-wrap"><canvas id="or-c2-' + id + '"></canvas></div></div>';
-
+ 
     /* type table */
     var typeData = buildTypeTable(city, typeRows, lastFull.Month);
     if (typeData.length) {
@@ -358,18 +358,18 @@
       });
       html += '</tbody></table>';
     }
-
+ 
     html += '<p class="attrib">' + ATTRIBUTION + '</p>';
     card.innerHTML = html;
     host.innerHTML = "";
     host.appendChild(card);
-
+ 
     /* sentence via textContent (safe) */
     if (ms !== null) {
       document.getElementById("or-gs-" + id).textContent =
         gaugeSentence(city, ms, pending, actives, trendPct);
     }
-
+ 
     /* charts */
     var last12 = fullRows.slice(-12);
     withChartJs(function () {
@@ -382,13 +382,13 @@
         " days");
     });
   }
-
+ 
   function statCard(lbl, val, note) {
     return '<div class="stat"><div class="lbl">' + lbl + '</div>' +
       '<div class="val">' + val + '</div>' +
       '<div class="note">' + note + '</div></div>';
   }
-
+ 
   function buildTypeTable(city, typeRows, monthKey) {
     if (!typeRows) return [];
     var lastYearKey = (Number(monthKey.slice(0, 4)) - 1) + monthKey.slice(4);
@@ -413,11 +413,11 @@
     });
     return out;
   }
-
+ 
   /* ---------------- CHART BUILDERS ---------------- */
-
+ 
   var AXIS = { color: "#8A857D", size: 11 };
-
+ 
   function baseOpts(suffix) {
     return {
       responsive: true,
@@ -448,7 +448,7 @@
       }
     };
   }
-
+ 
   function barChart(canvasId, labels, data) {
     new Chart(document.getElementById(canvasId), {
       type: "bar",
@@ -461,7 +461,7 @@
       options: baseOpts(" sold")
     });
   }
-
+ 
   function lineChart(canvasId, labels, data, suffix) {
     new Chart(document.getElementById(canvasId), {
       type: "line",
@@ -482,14 +482,14 @@
       options: baseOpts(suffix)
     });
   }
-
+ 
   /* ---------------- INIT ---------------- */
-
+ 
   function initHost(host, city) {
     if (host.getAttribute("data-or-init")) return;
     host.setAttribute("data-or-init", "1");
     host.innerHTML = '<div class="or-mkt"><div class="loading">Loading market data\u2026</div></div>';
-
+ 
     Promise.all([
       getCSV(METRICS_CSV),
       getCSV(BYTYPE_CSV).catch(function () { return null; })
@@ -500,7 +500,7 @@
       host.innerHTML = '<div class="or-mkt"><div class="err">Market data is temporarily unavailable.</div></div>';
     });
   }
-
+ 
   function init() {
     injectStyles();
     MOUNTS.forEach(function (m) {
@@ -508,7 +508,7 @@
       if (el) initHost(el, m.city);
     });
   }
-
+ 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {
