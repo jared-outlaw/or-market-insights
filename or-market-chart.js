@@ -1,3 +1,4 @@
+/* ============================================================
    OUTLAW REALTY — MARKET REPORT WIDGET  (v3)
    ------------------------------------------------------------
    Renders a full market report card per city from the live
